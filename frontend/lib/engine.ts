@@ -61,6 +61,7 @@ export interface BacktestResult {
     rejection_reason: string | null
   }>
   events_count: number
+  events: Array<{ id: string; type: string; timestamp: string; data: Record<string, unknown> }>
   equity_curve: Array<{ bar: number; equity: number; price: number }>
 }
 
@@ -124,15 +125,18 @@ function breakoutStrategy(
   bars: Bar[],
   currentPosition: string | null
 ): Signal | null {
-  if (bars.length < 20) return null
-  const highs = bars.slice(-20).map((b) => b.high)
-  const lows = bars.slice(-20).map((b) => b.low)
+  if (bars.length < 21) return null
+  // Use PRIOR bars for channel — exclude current bar to avoid look-ahead
+  const priorBars = bars.slice(-21, -1)
+  const highs = priorBars.map((b) => b.high)
+  const lows = priorBars.map((b) => b.low)
   const channelHigh = Math.max(...highs)
   const channelLow = Math.min(...lows)
   const price = bars[bars.length - 1].close
 
   if (!currentPosition && price > channelHigh) {
-    return { symbol: "", side: "BUY", strength: 0.8 }
+    const breakoutStrength = Math.min((price - channelHigh) / channelHigh * 50, 1)
+    return { symbol: "", side: "BUY", strength: Math.max(0.5, breakoutStrength) }
   }
   if (currentPosition === "BUY" && price < channelLow) {
     return { symbol: "", side: "SELL", strength: 1.0 }
@@ -207,7 +211,8 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
     // Check drawdown halt
     if (currentEquity > peakEquity) peakEquity = currentEquity
     const drawdown = (peakEquity - currentEquity) / peakEquity
-    if (drawdown > config.max_drawdown_pct / 100) continue
+    // max_drawdown_pct arrives as a fraction (e.g., 0.10 for 10%) from the UI
+    if (drawdown > config.max_drawdown_pct) continue
 
     // Get signal
     const currentPos = position ? position.side : null
@@ -219,7 +224,8 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
 
     if (signal.side === "BUY" && !position) {
       // Calculate position size
-      const maxNotional = currentEquity * (config.max_position_pct / 100)
+      // max_position_pct arrives as a fraction (e.g., 0.05 for 5%) from the UI
+      const maxNotional = currentEquity * config.max_position_pct
       const quantity = Math.max(
         1,
         Math.floor((maxNotional / price) * signal.strength)
@@ -302,21 +308,24 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
   const profitFactor =
     totalLosses > 0 ? totalWins / totalLosses : totalWins > 0 ? Infinity : 0
 
-  // Sharpe ratio
-  const meanPnl =
-    totalTrades > 0
-      ? closedPnls.reduce((a, b) => a + b, 0) / totalTrades
-      : 0
-  const stdPnl =
-    totalTrades > 1
-      ? Math.sqrt(
-          closedPnls
-            .map((p) => (p - meanPnl) ** 2)
-            .reduce((a, b) => a + b) /
-            (totalTrades - 1)
-        )
-      : 0
-  const sharpe = stdPnl > 0 ? (meanPnl / stdPnl) * Math.sqrt(252) : 0
+  // Sharpe ratio — computed from bar-level equity returns (not per-trade P&L)
+  let sharpe = 0
+  if (equityCurve.length > 2) {
+    const returns: number[] = []
+    for (let i = 1; i < equityCurve.length; i++) {
+      const prevEq = equityCurve[i - 1].equity
+      if (prevEq > 0) {
+        returns.push((equityCurve[i].equity - prevEq) / prevEq)
+      }
+    }
+    if (returns.length > 1) {
+      const meanRet = returns.reduce((a, b) => a + b, 0) / returns.length
+      const stdRet = Math.sqrt(
+        returns.map((r) => (r - meanRet) ** 2).reduce((a, b) => a + b) / (returns.length - 1)
+      )
+      sharpe = stdRet > 0 ? (meanRet / stdRet) * Math.sqrt(252) : 0
+    }
+  }
 
   // Max drawdown from equity curve
   let maxDD = 0
@@ -349,8 +358,8 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
       sharpe_ratio: Math.round(sharpe * 100) / 100,
       max_drawdown: Math.round(maxDD * 10000) / 10000,
       profit_factor:
-        profitFactor === Infinity
-          ? 999
+        !isFinite(profitFactor)
+          ? -1  // sentinel: frontend renders as "∞"
           : Math.round(profitFactor * 100) / 100,
       avg_win: Math.round(avgWin * 100) / 100,
       avg_loss: Math.round(avgLoss * 100) / 100,
@@ -361,6 +370,7 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
     },
     orders,
     events_count: events.length,
+    events,
     equity_curve: equityCurve,
   }
 }

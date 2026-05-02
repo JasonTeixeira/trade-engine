@@ -36,6 +36,7 @@ export interface BacktestResult {
     rejection_reason: string | null
   }>
   events_count: number
+  events: Array<{ id: string; type: string; timestamp: string; data: Record<string, unknown> }>
   equity_curve: Array<{ bar: number; equity: number; price: number }>
 }
 

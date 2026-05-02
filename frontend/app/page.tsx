@@ -175,7 +175,7 @@ export default function Dashboard() {
     setIsLoading(true)
     setError(null)
     try {
-      const prices = generateSamplePrices(5000, 200)
+      const prices = generateSamplePrices(5000, 1000)
       const config: BacktestConfig = {
         strategy,
         symbol,
@@ -192,12 +192,9 @@ export default function Dashboard() {
         description: `${res.metrics.total_trades} trades, ${(res.metrics.win_rate * 100).toFixed(1)}% win rate`,
       })
 
-      // Fetch events
-      try {
-        const ev = await api.getEvents(20)
-        setEvents(Array.isArray(ev) ? ev : [])
-      } catch {
-        /* events optional */
+      // Use events from backtest result
+      if (res.events && Array.isArray(res.events)) {
+        setEvents(res.events.slice(-20))
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Backtest failed"
@@ -488,8 +485,7 @@ export default function Dashboard() {
                     label="Equity"
                     value={result.equity}
                     prefix="$"
-                    colored
-                    icon={TrendingUp}
+                    icon={result.total_pnl >= 0 ? TrendingUp : TrendingDown}
                   />
                   <MetricCard
                     label="Total P&L"
@@ -520,7 +516,7 @@ export default function Dashboard() {
                   />
                   <MetricCard
                     label="Profit Factor"
-                    value={result.metrics.profit_factor.toFixed(2)}
+                    value={result.metrics.profit_factor < 0 ? "∞" : result.metrics.profit_factor.toFixed(2)}
                     colored
                     icon={BarChart3}
                   />
