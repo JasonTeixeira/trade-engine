@@ -1,5 +1,3 @@
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001"
-
 export interface BacktestConfig {
   strategy: string
   symbol: string
@@ -38,6 +36,7 @@ export interface BacktestResult {
     rejection_reason: string | null
   }>
   events_count: number
+  equity_curve: Array<{ bar: number; equity: number; price: number }>
 }
 
 export interface Position {
@@ -58,10 +57,10 @@ export interface HealthStatus {
 
 export const api = {
   health: (): Promise<HealthStatus> =>
-    fetch(`${API}/health`).then((r) => r.json()),
+    fetch("/api/health").then((r) => r.json()),
 
   runBacktest: (config: BacktestConfig): Promise<BacktestResult> =>
-    fetch(`${API}/engine/run`, {
+    fetch("/api/engine/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(config),
@@ -71,24 +70,33 @@ export const api = {
     }),
 
   getPositions: (): Promise<Position[]> =>
-    fetch(`${API}/engine/positions`).then((r) => r.json()),
+    fetch("/api/engine/positions").then((r) => r.json()),
 
-  getMetrics: () => fetch(`${API}/engine/metrics`).then((r) => r.json()),
+  getMetrics: () => fetch("/api/engine/metrics").then((r) => r.json()),
 
-  getSummary: () => fetch(`${API}/engine/summary`).then((r) => r.json()),
+  getSummary: () => fetch("/api/engine/summary").then((r) => r.json()),
 
   getEvents: (limit = 50) =>
-    fetch(`${API}/engine/events?limit=${limit}`).then((r) => r.json()),
+    fetch(`/api/engine/events?limit=${limit}`).then((r) => r.json()),
 
-  exportCSV: () => fetch(`${API}/engine/export`),
+  exportCSV: () => fetch("/api/engine/export"),
 
   // Nexural Research integration
-  analyzeWithResearch: (): Promise<{status: string; session_id?: string; analysis?: Record<string, unknown>; engine_metrics?: Record<string, unknown>; message?: string}> =>
-    fetch(`${API}/research/analyze`, { method: "POST" }).then(r => {
+  analyzeWithResearch: (): Promise<{
+    status: string
+    session_id?: string
+    analysis?: Record<string, unknown>
+    engine_metrics?: Record<string, unknown>
+    message?: string
+  }> =>
+    fetch("/api/research/analyze", { method: "POST" }).then((r) => {
       if (!r.ok) throw new Error(`Research analysis failed: ${r.status}`)
       return r.json()
     }),
 
-  researchStatus: (): Promise<{available: boolean; url: string; message?: string}> =>
-    fetch(`${API}/research/status`).then(r => r.json()),
+  researchStatus: (): Promise<{
+    available: boolean
+    url: string
+    message?: string
+  }> => fetch("/api/research/status").then((r) => r.json()),
 }

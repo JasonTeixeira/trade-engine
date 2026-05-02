@@ -234,18 +234,8 @@ export default function Dashboard() {
     }
   }, [])
 
-  // Build equity curve data
-  const equityCurve = result
-    ? (() => {
-        const prices = generateSamplePrices(5000, 200)
-        const pnlPerBar = result.total_pnl / prices.length
-        return prices.map((p, i) => ({
-          bar: i,
-          price: p,
-          equity: Math.round((initialCapital + pnlPerBar * (i + 1)) * 100) / 100,
-        }))
-      })()
-    : []
+  // Use equity curve from backtest result directly
+  const equityCurve = result?.equity_curve ?? []
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
