@@ -45,12 +45,20 @@ export interface BacktestResult {
     total_trades: number
     win_rate: number
     sharpe_ratio: number
+    sortino_ratio: number
+    calmar_ratio: number
     max_drawdown: number
     profit_factor: number
     avg_win: number
     avg_loss: number
     largest_win: number
     largest_loss: number
+    consecutive_wins: number
+    consecutive_losses: number
+    recovery_factor: number
+    avg_trade_duration: number
+    skewness: number
+    kurtosis: number
   }
   orders: Array<{
     order_id: string
@@ -329,11 +337,32 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
 
   // Max drawdown from equity curve
   let maxDD = 0
+  let maxDDdollar = 0
   let eqPeak = equityCurve[0]?.equity || initialCapital
   for (const pt of equityCurve) {
     if (pt.equity > eqPeak) eqPeak = pt.equity
     const dd = (eqPeak - pt.equity) / eqPeak
     if (dd > maxDD) maxDD = dd
+    const ddDollar = eqPeak - pt.equity
+    if (ddDollar > maxDDdollar) maxDDdollar = ddDollar
+  }
+
+  // Sortino ratio — uses downside deviation only
+  let sortino = 0
+  if (equityCurve.length > 2) {
+    const returns: number[] = []
+    for (let i = 1; i < equityCurve.length; i++) {
+      const prev = equityCurve[i - 1].equity
+      if (prev > 0) returns.push((equityCurve[i].equity - prev) / prev)
+    }
+    if (returns.length > 1) {
+      const meanR = returns.reduce((a, b) => a + b, 0) / returns.length
+      const downside = returns.filter((r) => r < 0)
+      const downsideDev = downside.length > 0
+        ? Math.sqrt(downside.map((r) => r ** 2).reduce((a, b) => a + b) / downside.length)
+        : 0
+      sortino = downsideDev > 0 ? (meanR / downsideDev) * Math.sqrt(252) : 0
+    }
   }
 
   // Current state
@@ -343,6 +372,38 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
     unrealizedPnl = (lastPrice - position.entryPrice) * position.quantity
   }
   const finalEquity = capital + unrealizedPnl
+
+  // Calmar ratio — annualized return / max drawdown
+  const totalReturn = (finalEquity - initialCapital) / initialCapital
+  const barsPerYear = 252 * 6.5 // hourly bars in a trading year
+  const years = config.prices.length / barsPerYear
+  const annualizedReturn = years > 0 ? totalReturn / years : totalReturn
+  const calmar = maxDD > 0 ? annualizedReturn / maxDD : 0
+
+  // Consecutive wins/losses
+  let maxConsecWins = 0, maxConsecLosses = 0, curWins = 0, curLosses = 0
+  for (const pnl of closedPnls) {
+    if (pnl > 0) { curWins++; curLosses = 0; maxConsecWins = Math.max(maxConsecWins, curWins) }
+    else { curLosses++; curWins = 0; maxConsecLosses = Math.max(maxConsecLosses, curLosses) }
+  }
+
+  // Recovery factor — total profit / max drawdown $
+  const totalProfit = closedPnls.reduce((a, b) => a + b, 0)
+  const recoveryFactor = maxDDdollar > 0 ? totalProfit / maxDDdollar : 0
+
+  // Avg trade duration (in bars)
+  const avgTradeDuration = totalTrades > 0 ? config.prices.length / totalTrades : 0
+
+  // Skewness and Kurtosis of trade P&L
+  let skewness = 0, kurtosis = 0
+  if (totalTrades > 2) {
+    const mean = closedPnls.reduce((a, b) => a + b, 0) / totalTrades
+    const std = Math.sqrt(closedPnls.map((p) => (p - mean) ** 2).reduce((a, b) => a + b) / (totalTrades - 1))
+    if (std > 0) {
+      skewness = closedPnls.map((p) => ((p - mean) / std) ** 3).reduce((a, b) => a + b) / totalTrades
+      kurtosis = closedPnls.map((p) => ((p - mean) / std) ** 4).reduce((a, b) => a + b) / totalTrades - 3
+    }
+  }
 
   return {
     total_orders: orders.length,
@@ -367,6 +428,14 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
         wins.length > 0 ? Math.round(Math.max(...wins) * 100) / 100 : 0,
       largest_loss:
         losses.length > 0 ? Math.round(Math.min(...losses) * 100) / 100 : 0,
+      sortino_ratio: Math.round(sortino * 100) / 100,
+      calmar_ratio: Math.round(calmar * 100) / 100,
+      consecutive_wins: maxConsecWins,
+      consecutive_losses: maxConsecLosses,
+      recovery_factor: Math.round(recoveryFactor * 100) / 100,
+      avg_trade_duration: Math.round(avgTradeDuration),
+      skewness: Math.round(skewness * 100) / 100,
+      kurtosis: Math.round(kurtosis * 100) / 100,
     },
     orders,
     events_count: events.length,

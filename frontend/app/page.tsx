@@ -158,6 +158,7 @@ export default function Dashboard() {
     Array<{ type: string; timestamp: string; data?: Record<string, unknown> }>
   >([])
   const [eventsOpen, setEventsOpen] = useState(false)
+  const [advancedMetricsOpen, setAdvancedMetricsOpen] = useState(false)
 
   // Strategy descriptions
   const strategyDescriptions: Record<string, string> = {
@@ -530,6 +531,34 @@ export default function Dashboard() {
                     label="Open Positions"
                     value={result.open_positions}
                   />
+                </div>
+
+                {/* ---- Institutional Metrics ---- */}
+                <div className="mt-3">
+                  <button
+                    onClick={() => setAdvancedMetricsOpen(prev => !prev)}
+                    className="text-xs text-[#71717A] hover:text-[#A1A1AA] mb-2 flex items-center gap-1"
+                  >
+                    <Zap className="h-3 w-3" />
+                    Advanced Metrics
+                    {advancedMetricsOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </button>
+                  {advancedMetricsOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+                    >
+                      <MetricCard label="Sortino" value={result.metrics.sortino_ratio} colored />
+                      <MetricCard label="Calmar" value={result.metrics.calmar_ratio} colored />
+                      <MetricCard label="Recovery Factor" value={result.metrics.recovery_factor} colored />
+                      <MetricCard label="Skewness" value={result.metrics.skewness} />
+                      <MetricCard label="Kurtosis" value={result.metrics.kurtosis} />
+                      <MetricCard label="Win Streak" value={result.metrics.consecutive_wins} suffix=" trades" />
+                      <MetricCard label="Loss Streak" value={result.metrics.consecutive_losses} suffix=" trades" />
+                      <MetricCard label="Avg Duration" value={result.metrics.avg_trade_duration} suffix=" bars" />
+                    </motion.div>
+                  )}
                 </div>
 
                 {/* ---- Equity Curve ---- */}

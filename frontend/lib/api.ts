@@ -20,12 +20,20 @@ export interface BacktestResult {
     total_trades: number
     win_rate: number
     sharpe_ratio: number
+    sortino_ratio: number
+    calmar_ratio: number
     max_drawdown: number
     profit_factor: number
     avg_win: number
     avg_loss: number
     largest_win: number
     largest_loss: number
+    consecutive_wins: number
+    consecutive_losses: number
+    recovery_factor: number
+    avg_trade_duration: number
+    skewness: number
+    kurtosis: number
   }
   orders: Array<{
     order_id: string
