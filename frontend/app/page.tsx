@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Zap,
   Loader2,
+  GitCompareArrows,
 } from "lucide-react"
 import {
   AreaChart,
@@ -26,6 +27,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from "recharts"
 import { toast } from "sonner"
@@ -133,7 +135,7 @@ function SideBadge({ side }: { side: string }) {
 export default function Dashboard() {
   // Connection status
   const [connected, setConnected] = useState(false)
-  const [strategies, setStrategies] = useState<string[]>([
+  const [strategies] = useState<string[]>([
     "momentum",
     "mean_reversion",
     "breakout",
@@ -148,10 +150,26 @@ export default function Dashboard() {
   const [slippageBps, setSlippageBps] = useState(5)
   const [commission, setCommission] = useState(2.5)
 
+  // Data source
+  const [useRealData, setUseRealData] = useState(false)
+  const [dataLoading, setDataLoading] = useState(false)
+  const [period, setPeriod] = useState("1y")
+
+  // Strategy params
+  const [lookback, setLookback] = useState(20)
+  const [entryThreshold, setEntryThreshold] = useState(0.002)
+  const [numStd, setNumStd] = useState(2.0)
+  const [entryLookback, setEntryLookback] = useState(20)
+  const [exitLookback, setExitLookback] = useState(10)
+
   // Results
   const [result, setResult] = useState<BacktestResult | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Comparison
+  const [comparing, setComparing] = useState(false)
+  const [comparison, setComparison] = useState<BacktestResult[] | null>(null)
 
   // Events
   const [events, setEvents] = useState<
@@ -173,7 +191,7 @@ export default function Dashboard() {
       .health()
       .then((h) => {
         setConnected(true)
-        if (h.strategies?.length) setStrategies(h.strategies)
+        void h
       })
       .catch(() => setConnected(false))
   }, [])
@@ -183,7 +201,18 @@ export default function Dashboard() {
     setIsLoading(true)
     setError(null)
     try {
-      const prices = generateSamplePrices(5000, 1000)
+      let prices: number[]
+      if (useRealData) {
+        setDataLoading(true)
+        const res = await fetch(`/api/data/${symbol}?period=${period}`)
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
+        prices = data.data.map((bar: { close: number }) => bar.close)
+        setDataLoading(false)
+      } else {
+        prices = generateSamplePrices(5000, 1000)
+      }
+
       const config: BacktestConfig = {
         strategy,
         symbol,
@@ -193,9 +222,18 @@ export default function Dashboard() {
         max_drawdown_pct: maxDrawdownPct / 100,
         slippage_bps: slippageBps,
         commission,
+        bar_frequency: useRealData ? "1d" : "1h",
+        strategy_params: {
+          lookback,
+          entry_threshold: entryThreshold,
+          num_std: numStd,
+          entry_lookback: entryLookback,
+          exit_lookback: exitLookback,
+        },
       }
       const res = await api.runBacktest(config)
       setResult(res)
+      setComparison(null)
       toast.success("Backtest complete", {
         description: `${res.metrics.total_trades} trades, ${(res.metrics.win_rate * 100).toFixed(1)}% win rate`,
       })
@@ -208,6 +246,7 @@ export default function Dashboard() {
       const msg = err instanceof Error ? err.message : "Backtest failed"
       setError(msg)
       toast.error("Backtest failed", { description: msg })
+      setDataLoading(false)
     } finally {
       setIsLoading(false)
     }
@@ -219,6 +258,71 @@ export default function Dashboard() {
     maxDrawdownPct,
     slippageBps,
     commission,
+    useRealData,
+    period,
+    lookback,
+    entryThreshold,
+    numStd,
+    entryLookback,
+    exitLookback,
+  ])
+
+  // Compare all strategies
+  const runComparison = useCallback(async () => {
+    setComparing(true)
+    setError(null)
+    try {
+      let prices: number[]
+      if (useRealData) {
+        const res = await fetch(`/api/data/${symbol}?period=${period}`)
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
+        prices = data.data.map((bar: { close: number }) => bar.close)
+      } else {
+        prices = generateSamplePrices(5000, 1000)
+      }
+
+      const results: BacktestResult[] = []
+      for (const strat of strategies) {
+        const config: BacktestConfig = {
+          strategy: strat,
+          symbol,
+          initial_capital: initialCapital,
+          prices,
+          max_position_pct: maxPositionPct / 100,
+          max_drawdown_pct: maxDrawdownPct / 100,
+          slippage_bps: slippageBps,
+          commission,
+          bar_frequency: useRealData ? "1d" : "1h",
+        }
+        const res = await fetch("/api/engine/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        })
+        results.push(await res.json())
+      }
+      setComparison(results)
+      toast.success("Comparison complete", {
+        description: `${strategies.length} strategies compared`,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Comparison failed"
+      setError(msg)
+      toast.error("Comparison failed", { description: msg })
+    } finally {
+      setComparing(false)
+    }
+  }, [
+    strategies,
+    symbol,
+    initialCapital,
+    maxPositionPct,
+    maxDrawdownPct,
+    slippageBps,
+    commission,
+    useRealData,
+    period,
   ])
 
   // Export CSV
@@ -278,6 +382,47 @@ export default function Dashboard() {
             Backtest Configuration
           </h2>
 
+          {/* Data Source Toggle */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-[#A1A1AA]">Data Source</label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setUseRealData(false)}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${!useRealData ? "bg-[#06B6D4] text-black font-semibold" : "bg-[#18181B] text-[#A1A1AA] border border-[#27272A] hover:border-[#3F3F46]"}`}
+              >
+                Sample Data
+              </button>
+              <button
+                type="button"
+                onClick={() => setUseRealData(true)}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${useRealData ? "bg-[#06B6D4] text-black font-semibold" : "bg-[#18181B] text-[#A1A1AA] border border-[#27272A] hover:border-[#3F3F46]"}`}
+              >
+                Real Data (Yahoo Finance)
+              </button>
+            </div>
+            {useRealData && (
+              <div className="flex gap-1.5 mt-2">
+                {["3mo", "6mo", "1y", "2y"].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPeriod(p)}
+                    className={`px-2.5 py-1 text-xs rounded transition-colors ${period === p ? "bg-[#06B6D4]/20 text-[#06B6D4] border border-[#06B6D4]/30" : "bg-[#18181B] text-[#71717A] border border-[#27272A] hover:border-[#3F3F46]"}`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+            {dataLoading && (
+              <div className="flex items-center gap-2 mt-1 text-xs text-[#06B6D4]">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Fetching market data...
+              </div>
+            )}
+          </div>
+
           {/* Strategy selector */}
           <div className="space-y-1.5">
             <label htmlFor="strategy" className="text-xs font-medium text-[#A1A1AA]">
@@ -295,6 +440,67 @@ export default function Dashboard() {
             </select>
             <p className="text-xs text-[#71717A] mt-2">{strategyDescriptions[strategy]}</p>
           </div>
+
+          {/* Strategy Parameters */}
+          {strategy === "momentum" && (
+            <div className="space-y-3 p-3 bg-[#0A0A0B] rounded-lg border border-[#27272A]">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-[#71717A]">Strategy Parameters</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <label className="text-[#71717A]">SMA Period</label>
+                  <span className="text-[#06B6D4] font-mono">{lookback}</span>
+                </div>
+                <input type="range" min={5} max={50} value={lookback} onChange={e => setLookback(Number(e.target.value))} className="w-full accent-[#06B6D4] h-1.5 rounded-full appearance-none bg-[#27272A] cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#06B6D4]" />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <label className="text-[#71717A]">Entry Threshold</label>
+                  <span className="text-[#06B6D4] font-mono">{(entryThreshold * 100).toFixed(1)}%</span>
+                </div>
+                <input type="range" min={1} max={30} value={entryThreshold * 1000} onChange={e => setEntryThreshold(Number(e.target.value) / 1000)} className="w-full accent-[#06B6D4] h-1.5 rounded-full appearance-none bg-[#27272A] cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#06B6D4]" />
+              </div>
+            </div>
+          )}
+
+          {strategy === "mean_reversion" && (
+            <div className="space-y-3 p-3 bg-[#0A0A0B] rounded-lg border border-[#27272A]">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-[#71717A]">Strategy Parameters</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <label className="text-[#71717A]">Lookback Period</label>
+                  <span className="text-[#06B6D4] font-mono">{lookback}</span>
+                </div>
+                <input type="range" min={5} max={50} value={lookback} onChange={e => setLookback(Number(e.target.value))} className="w-full accent-[#06B6D4] h-1.5 rounded-full appearance-none bg-[#27272A] cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#06B6D4]" />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <label className="text-[#71717A]">Std Deviations</label>
+                  <span className="text-[#06B6D4] font-mono">{numStd.toFixed(1)}</span>
+                </div>
+                <input type="range" min={10} max={40} value={numStd * 10} onChange={e => setNumStd(Number(e.target.value) / 10)} className="w-full accent-[#06B6D4] h-1.5 rounded-full appearance-none bg-[#27272A] cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#06B6D4]" />
+              </div>
+            </div>
+          )}
+
+          {strategy === "breakout" && (
+            <div className="space-y-3 p-3 bg-[#0A0A0B] rounded-lg border border-[#27272A]">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-[#71717A]">Strategy Parameters</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <label className="text-[#71717A]">Entry Lookback</label>
+                  <span className="text-[#06B6D4] font-mono">{entryLookback}</span>
+                </div>
+                <input type="range" min={5} max={55} value={entryLookback} onChange={e => setEntryLookback(Number(e.target.value))} className="w-full accent-[#06B6D4] h-1.5 rounded-full appearance-none bg-[#27272A] cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#06B6D4]" />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs">
+                  <label className="text-[#71717A]">Exit Lookback</label>
+                  <span className="text-[#06B6D4] font-mono">{exitLookback}</span>
+                </div>
+                <input type="range" min={3} max={30} value={exitLookback} onChange={e => setExitLookback(Number(e.target.value))} className="w-full accent-[#06B6D4] h-1.5 rounded-full appearance-none bg-[#27272A] cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#06B6D4]" />
+              </div>
+            </div>
+          )}
 
           {/* Symbol */}
           <div className="space-y-1.5">
@@ -414,7 +620,7 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={runBacktest}
-            disabled={isLoading}
+            disabled={isLoading || comparing}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#06B6D4] px-4 py-3 text-sm font-semibold text-[#09090B] transition-colors hover:bg-[#22D3EE] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? (
@@ -430,6 +636,26 @@ export default function Dashboard() {
             )}
           </button>
 
+          {/* Compare All Strategies */}
+          <button
+            type="button"
+            onClick={runComparison}
+            disabled={isLoading || comparing}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#27272A] bg-[#18181B] px-4 py-3 text-sm font-medium text-[#A1A1AA] transition-colors hover:text-[#FAFAFA] hover:border-[#3F3F46] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {comparing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Comparing Strategies...
+              </>
+            ) : (
+              <>
+                <GitCompareArrows className="h-4 w-4" />
+                Compare All Strategies
+              </>
+            )}
+          </button>
+
           {error && (
             <div className="rounded-md border border-[#EF4444]/30 bg-[#EF4444]/10 px-3 py-2 text-xs text-[#EF4444]">
               {error}
@@ -441,7 +667,7 @@ export default function Dashboard() {
         {/* Right Panel — Results                                          */}
         {/* ============================================================= */}
         <main className="flex-1 overflow-y-auto p-6 space-y-6">
-          {!result && !isLoading && (
+          {!result && !isLoading && !comparison && (
             <div className="flex flex-col items-center justify-center h-full text-[#71717A] gap-4">
               <BarChart3 className="h-16 w-16 opacity-30" />
               <p className="text-sm">
@@ -503,11 +729,34 @@ export default function Dashboard() {
                   />
                   <MetricCard
                     label="Profit Factor"
-                    value={result.metrics.profit_factor < 0 ? "∞" : result.metrics.profit_factor.toFixed(2)}
+                    value={result.metrics.profit_factor < 0 ? "\u221E" : result.metrics.profit_factor.toFixed(2)}
                     colored
                     icon={BarChart3}
                   />
                 </div>
+
+                {/* ---- Benchmark Cards ---- */}
+                {result.benchmark && (
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                    <MetricCard
+                      label="Buy & Hold Return"
+                      value={(result.benchmark.buy_hold_return * 100).toFixed(2)}
+                      suffix="%"
+                      colored
+                    />
+                    <MetricCard
+                      label="Buy & Hold Equity"
+                      value={result.benchmark.buy_hold_equity}
+                      prefix="$"
+                    />
+                    <MetricCard
+                      label="Alpha"
+                      value={(result.benchmark.alpha * 100).toFixed(2)}
+                      suffix="%"
+                      colored
+                    />
+                  </div>
+                )}
 
                 {/* ---- Secondary Metrics ---- */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -561,7 +810,7 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {/* ---- Equity Curve ---- */}
+                {/* ---- Equity Curve with Benchmark ---- */}
                 {(() => {
                   const startDate = new Date(2024, 0, 1)
                   const chartData = result.equity_curve.map((pt, i) => ({
@@ -581,7 +830,7 @@ export default function Dashboard() {
                     <>
                       <div className="rounded-lg border border-[#27272A] bg-[#18181B] p-4">
                         <h3 className="text-sm font-semibold text-[#A1A1AA] mb-4">
-                          Equity Curve
+                          Equity Curve vs Buy &amp; Hold
                         </h3>
                         <div className="h-[280px]">
                           <ResponsiveContainer width="100%" height="100%">
@@ -634,10 +883,16 @@ export default function Dashboard() {
                                   color: "#FAFAFA",
                                   fontSize: 12,
                                 }}
-                                formatter={(value) => [
+                                formatter={(value, name) => [
                                   `$${Number(value).toLocaleString()}`,
-                                  "Equity",
+                                  name === "equity" ? "Strategy" : "Buy & Hold",
                                 ]}
+                              />
+                              <Legend
+                                verticalAlign="top"
+                                height={28}
+                                formatter={(value: string) => value === "equity" ? "Strategy" : "Buy & Hold"}
+                                wrapperStyle={{ fontSize: 11, color: "#A1A1AA" }}
                               />
                               <Area
                                 type="monotone"
@@ -645,6 +900,16 @@ export default function Dashboard() {
                                 stroke="#06B6D4"
                                 strokeWidth={2}
                                 fill="url(#equityGrad)"
+                                name="equity"
+                              />
+                              <Area
+                                type="monotone"
+                                dataKey="benchmark"
+                                stroke="#71717A"
+                                fill="none"
+                                strokeDasharray="5 5"
+                                strokeWidth={1.5}
+                                name="benchmark"
                               />
                             </AreaChart>
                           </ResponsiveContainer>
@@ -904,6 +1169,55 @@ export default function Dashboard() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* ---- Strategy Comparison Table ---- */}
+          {comparison && (
+            <div className="mt-6 p-4 bg-[#18181B] rounded-xl border border-[#27272A]">
+              <h3 className="text-sm font-semibold text-[#FAFAFA] mb-3">Strategy Comparison</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[#71717A] border-b border-[#27272A]">
+                      <th className="text-left py-2 px-2">Metric</th>
+                      <th className="text-right py-2 px-2">Momentum</th>
+                      <th className="text-right py-2 px-2">Mean Reversion</th>
+                      <th className="text-right py-2 px-2">Breakout</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-[#A1A1AA]">
+                    {[
+                      { label: "Total P&L", key: "total_pnl", fmt: (v: number) => `$${v.toLocaleString()}`, metric: false },
+                      { label: "Win Rate", key: "win_rate", fmt: (v: number) => `${(v * 100).toFixed(1)}%`, metric: true },
+                      { label: "Sharpe", key: "sharpe_ratio", fmt: (v: number) => v.toFixed(2), metric: true },
+                      { label: "Max DD", key: "max_drawdown", fmt: (v: number) => `${(v * 100).toFixed(1)}%`, metric: true },
+                      { label: "Trades", key: "total_trades", fmt: (v: number) => String(v), metric: true },
+                      { label: "Profit Factor", key: "profit_factor", fmt: (v: number) => v < 0 ? "\u221E" : v.toFixed(2), metric: true },
+                      { label: "Alpha", key: "alpha", fmt: (v: number) => `${(v * 100).toFixed(2)}%`, metric: false, benchmark: true },
+                    ].map(({ label, key, fmt, metric, benchmark: isBenchmark }) => (
+                      <tr key={key} className="border-b border-[#27272A]/50">
+                        <td className="py-1.5 px-2 text-[#71717A]">{label}</td>
+                        {comparison.map((r, i) => {
+                          let val: number
+                          if (isBenchmark) {
+                            val = (r.benchmark as Record<string, number>)[key]
+                          } else if (metric) {
+                            val = (r.metrics as Record<string, number>)[key]
+                          } else {
+                            val = (r as unknown as Record<string, number>)[key]
+                          }
+                          return (
+                            <td key={i} className={`py-1.5 px-2 text-right font-mono ${val > 0 ? "text-[#10B981]" : val < 0 ? "text-[#EF4444]" : "text-[#A1A1AA]"}`}>
+                              {fmt(val)}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </main>
       </div>
     </div>

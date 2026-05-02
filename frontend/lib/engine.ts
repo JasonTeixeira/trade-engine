@@ -32,6 +32,15 @@ export interface BacktestConfig {
   max_drawdown_pct: number
   slippage_bps: number
   commission: number
+  bar_frequency: "1m" | "5m" | "15m" | "1h" | "1d"
+  strategy_params?: {
+    lookback?: number
+    entry_threshold?: number
+    exit_threshold?: number
+    num_std?: number
+    entry_lookback?: number
+    exit_lookback?: number
+  }
 }
 
 export interface BacktestResult {
@@ -60,6 +69,11 @@ export interface BacktestResult {
     skewness: number
     kurtosis: number
   }
+  benchmark: {
+    buy_hold_return: number
+    buy_hold_equity: number
+    alpha: number
+  }
   orders: Array<{
     order_id: string
     side: string
@@ -70,7 +84,7 @@ export interface BacktestResult {
   }>
   events_count: number
   events: Array<{ id: string; type: string; timestamp: string; data: Record<string, unknown> }>
-  equity_curve: Array<{ bar: number; equity: number; price: number }>
+  equity_curve: Array<{ bar: number; equity: number; price: number; benchmark: number }>
 }
 
 // ---------------------------------------------------------------------------
@@ -79,22 +93,24 @@ export interface BacktestResult {
 
 function momentumStrategy(
   bars: Bar[],
-  currentPosition: string | null
+  currentPosition: string | null,
+  lookback = 20,
+  entryThreshold = 0.002
 ): Signal | null {
-  if (bars.length < 20) return null
+  if (bars.length < lookback) return null
   const closes = bars.map((b) => b.close)
-  const sma20 = closes.slice(-20).reduce((a, b) => a + b) / 20
+  const sma = closes.slice(-lookback).reduce((a, b) => a + b) / lookback
   const price = closes[closes.length - 1]
-  const threshold = sma20 * 0.002
+  const threshold = sma * entryThreshold
 
-  if (!currentPosition && price > sma20 + threshold) {
+  if (!currentPosition && price > sma + threshold) {
     return {
       symbol: "",
       side: "BUY",
-      strength: Math.min(((price - sma20) / sma20) * 10, 1),
+      strength: Math.min(((price - sma) / sma) * 10, 1),
     }
   }
-  if (currentPosition === "BUY" && price < sma20) {
+  if (currentPosition === "BUY" && price < sma) {
     return { symbol: "", side: "SELL", strength: 0.8 }
   }
   return null
@@ -102,21 +118,23 @@ function momentumStrategy(
 
 function meanReversionStrategy(
   bars: Bar[],
-  currentPosition: string | null
+  currentPosition: string | null,
+  lookback = 20,
+  numStd = 2.0
 ): Signal | null {
-  if (bars.length < 20) return null
+  if (bars.length < lookback) return null
   const closes = bars.map((b) => b.close)
-  const sma = closes.slice(-20).reduce((a, b) => a + b) / 20
+  const sma = closes.slice(-lookback).reduce((a, b) => a + b) / lookback
   const std = Math.sqrt(
     closes
-      .slice(-20)
+      .slice(-lookback)
       .map((c) => (c - sma) ** 2)
-      .reduce((a, b) => a + b) / 20
+      .reduce((a, b) => a + b) / lookback
   )
   const price = closes[closes.length - 1]
   const zScore = (price - sma) / (std || 1)
 
-  if (!currentPosition && zScore < -2) {
+  if (!currentPosition && zScore < -numStd) {
     return {
       symbol: "",
       side: "BUY",
@@ -131,23 +149,28 @@ function meanReversionStrategy(
 
 function breakoutStrategy(
   bars: Bar[],
-  currentPosition: string | null
+  currentPosition: string | null,
+  entryLookback = 20,
+  exitLookback = 10
 ): Signal | null {
-  if (bars.length < 21) return null
+  if (bars.length < entryLookback + 1) return null
   // Use PRIOR bars for channel — exclude current bar to avoid look-ahead
-  const priorBars = bars.slice(-21, -1)
-  const highs = priorBars.map((b) => b.high)
-  const lows = priorBars.map((b) => b.low)
+  const entryBars = bars.slice(-(entryLookback + 1), -1)
+  const highs = entryBars.map((b) => b.high)
   const channelHigh = Math.max(...highs)
-  const channelLow = Math.min(...lows)
   const price = bars[bars.length - 1].close
 
   if (!currentPosition && price > channelHigh) {
     const breakoutStrength = Math.min((price - channelHigh) / channelHigh * 50, 1)
     return { symbol: "", side: "BUY", strength: Math.max(0.5, breakoutStrength) }
   }
-  if (currentPosition === "BUY" && price < channelLow) {
-    return { symbol: "", side: "SELL", strength: 1.0 }
+  if (currentPosition === "BUY") {
+    const exitBars = bars.slice(-(exitLookback + 1), -1)
+    const lows = exitBars.map((b) => b.low)
+    const channelLow = Math.min(...lows)
+    if (price < channelLow) {
+      return { symbol: "", side: "SELL", strength: 1.0 }
+    }
   }
   return null
 }
@@ -157,12 +180,17 @@ function breakoutStrategy(
 // ---------------------------------------------------------------------------
 
 export function runBacktest(config: BacktestConfig): BacktestResult {
-  const strategyFn =
-    config.strategy === "mean_reversion"
-      ? meanReversionStrategy
-      : config.strategy === "breakout"
-        ? breakoutStrategy
-        : momentumStrategy
+  const params = config.strategy_params || {}
+
+  const strategyFn = (bars: Bar[], currentPos: string | null): Signal | null => {
+    if (config.strategy === "mean_reversion") {
+      return meanReversionStrategy(bars, currentPos, params.lookback ?? 20, params.num_std ?? 2.0)
+    }
+    if (config.strategy === "breakout") {
+      return breakoutStrategy(bars, currentPos, params.entry_lookback ?? 20, params.exit_lookback ?? 10)
+    }
+    return momentumStrategy(bars, currentPos, params.lookback ?? 20, params.entry_threshold ?? 0.002)
+  }
 
   let capital = config.initial_capital
   const initialCapital = capital
@@ -174,7 +202,7 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
   } | null = null
   const orders: BacktestResult["orders"] = []
   const events: EngineEvent[] = []
-  const equityCurve: Array<{ bar: number; equity: number; price: number }> = []
+  const equityCurve: Array<{ bar: number; equity: number; price: number; benchmark: number }> = []
   const closedPnls: number[] = []
   let eventCounter = 0
 
@@ -188,6 +216,7 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
   }
 
   const bars: Bar[] = []
+  const firstPrice = config.prices[0]
 
   for (let i = 0; i < config.prices.length; i++) {
     const price = config.prices[i]
@@ -214,6 +243,7 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
       bar: i,
       equity: Math.round(currentEquity * 100) / 100,
       price,
+      benchmark: Math.round(initialCapital * (price / firstPrice) * 100) / 100,
     })
 
     // Check drawdown halt
@@ -316,6 +346,13 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
   const profitFactor =
     totalLosses > 0 ? totalWins / totalLosses : totalWins > 0 ? Infinity : 0
 
+  // Bar frequency annualization
+  const barsPerYearMap: Record<string, number> = {
+    "1m": 252 * 390, "5m": 252 * 78, "15m": 252 * 26,
+    "1h": 252 * 6.5, "1d": 252,
+  }
+  const annualizationFactor = Math.sqrt(barsPerYearMap[config.bar_frequency || "1d"] || 252)
+
   // Sharpe ratio — computed from bar-level equity returns (not per-trade P&L)
   let sharpe = 0
   if (equityCurve.length > 2) {
@@ -331,7 +368,7 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
       const stdRet = Math.sqrt(
         returns.map((r) => (r - meanRet) ** 2).reduce((a, b) => a + b) / (returns.length - 1)
       )
-      sharpe = stdRet > 0 ? (meanRet / stdRet) * Math.sqrt(252) : 0
+      sharpe = stdRet > 0 ? (meanRet / stdRet) * annualizationFactor : 0
     }
   }
 
@@ -361,7 +398,7 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
       const downsideDev = downside.length > 0
         ? Math.sqrt(downside.map((r) => r ** 2).reduce((a, b) => a + b) / downside.length)
         : 0
-      sortino = downsideDev > 0 ? (meanR / downsideDev) * Math.sqrt(252) : 0
+      sortino = downsideDev > 0 ? (meanR / downsideDev) * annualizationFactor : 0
     }
   }
 
@@ -375,7 +412,7 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
 
   // Calmar ratio — annualized return / max drawdown
   const totalReturn = (finalEquity - initialCapital) / initialCapital
-  const barsPerYear = 252 * 6.5 // hourly bars in a trading year
+  const barsPerYear = barsPerYearMap[config.bar_frequency || "1d"] || 252
   const years = config.prices.length / barsPerYear
   const annualizedReturn = years > 0 ? totalReturn / years : totalReturn
   const calmar = maxDD > 0 ? annualizedReturn / maxDD : 0
@@ -404,6 +441,11 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
       kurtosis = closedPnls.map((p) => ((p - mean) / std) ** 4).reduce((a, b) => a + b) / totalTrades - 3
     }
   }
+
+  // Benchmark
+  const buyHoldReturn = (config.prices[config.prices.length - 1] / config.prices[0]) - 1
+  const buyHoldEquity = Math.round(initialCapital * (1 + buyHoldReturn) * 100) / 100
+  const alpha = Math.round(((finalEquity / initialCapital - 1) - buyHoldReturn) * 10000) / 10000
 
   return {
     total_orders: orders.length,
@@ -436,6 +478,11 @@ export function runBacktest(config: BacktestConfig): BacktestResult {
       avg_trade_duration: Math.round(avgTradeDuration),
       skewness: Math.round(skewness * 100) / 100,
       kurtosis: Math.round(kurtosis * 100) / 100,
+    },
+    benchmark: {
+      buy_hold_return: Math.round(buyHoldReturn * 10000) / 10000,
+      buy_hold_equity: buyHoldEquity,
+      alpha,
     },
     orders,
     events_count: events.length,

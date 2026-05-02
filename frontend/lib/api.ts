@@ -7,6 +7,15 @@ export interface BacktestConfig {
   max_drawdown_pct: number
   slippage_bps: number
   commission: number
+  bar_frequency: "1m" | "5m" | "15m" | "1h" | "1d"
+  strategy_params?: {
+    lookback?: number
+    entry_threshold?: number
+    exit_threshold?: number
+    num_std?: number
+    entry_lookback?: number
+    exit_lookback?: number
+  }
 }
 
 export interface BacktestResult {
@@ -45,7 +54,12 @@ export interface BacktestResult {
   }>
   events_count: number
   events: Array<{ id: string; type: string; timestamp: string; data: Record<string, unknown> }>
-  equity_curve: Array<{ bar: number; equity: number; price: number }>
+  benchmark: {
+    buy_hold_return: number
+    buy_hold_equity: number
+    alpha: number
+  }
+  equity_curve: Array<{ bar: number; equity: number; price: number; benchmark: number }>
 }
 
 export interface Position {
