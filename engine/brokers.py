@@ -15,7 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 
 from models.orders import Order, Side
 from models.fills import Fill

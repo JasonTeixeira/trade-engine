@@ -8,7 +8,7 @@ where audit trails are a regulatory requirement.
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
@@ -17,7 +17,7 @@ from uuid import uuid4
 class Event:
     """Base event — all events inherit from this."""
     event_id: str = field(default_factory=lambda: f"EVT-{uuid4().hex[:8].upper()}")
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ═══ Order Events ═══

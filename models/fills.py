@@ -7,7 +7,7 @@ They include slippage (difference between expected and actual price).
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 
@@ -27,7 +27,7 @@ class Fill:
     expected_price: float
     commission: float = 0.0
     fill_id: str = field(default_factory=lambda: f"FILL-{uuid4().hex[:8].upper()}")
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def slippage(self) -> float:

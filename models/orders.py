@@ -9,7 +9,7 @@ gets cancelled).
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 from uuid import uuid4
@@ -80,8 +80,8 @@ class Order:
     # Auto-generated
     order_id: str = field(default_factory=lambda: f"ORD-{uuid4().hex[:8].upper()}")
     state: OrderState = field(default=OrderState.CREATED)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Fill tracking
     filled_quantity: float = 0.0
@@ -126,7 +126,7 @@ class Order:
             )
 
         self.state = new_state
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
         if reason and new_state == OrderState.REJECTED:
             self.rejection_reason = reason

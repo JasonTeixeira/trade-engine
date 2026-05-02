@@ -29,6 +29,7 @@ from engine.order_manager import OrderManager
 from engine.position_tracker import PositionTracker
 from engine.event_store import EventStore
 from engine.brokers import Broker
+from engine.logging import logger
 from risk.manager import RiskManager
 
 
@@ -56,8 +57,12 @@ class Engine:
     for full audit trail and replay capability.
     """
 
-    def __init__(self, broker: Broker, risk_manager: RiskManager):
-        self._event_store = EventStore()
+    def __init__(self, broker: Broker, risk_manager: RiskManager, persist: bool = False, db_path: str = "data/trade_engine.db"):
+        if persist:
+            from engine.persistent_store import PersistentEventStore
+            self._event_store = PersistentEventStore(db_path)
+        else:
+            self._event_store = EventStore()
         self._order_manager = OrderManager(self._event_store)
         self._position_tracker = PositionTracker(self._event_store)
         self._broker = broker
@@ -77,6 +82,8 @@ class Engine:
 
         Returns the Order if created, None if rejected by risk.
         """
+        logger.info(f"Signal received: {signal.side.value} {signal.symbol} strength={signal.strength}")
+
         price = current_price or self._prices.get(signal.symbol, 0)
         if price <= 0:
             raise ValueError(f"No price available for {signal.symbol}")
@@ -92,6 +99,8 @@ class Engine:
             current_positions=positions,
             current_price=price,
         )
+
+        logger.info(f"Risk check: approved={check.approved}, reason={check.reason}")
 
         if not check.approved:
             # Create and immediately reject the order
@@ -112,6 +121,8 @@ class Engine:
             strategy_id=signal.strategy_id,
         )
 
+        logger.info(f"Order created: {order.order_id} {order.side.value} {order.quantity} {order.symbol}")
+
         # Submit to broker
         self._order_manager.submit(order.order_id, self._broker.name)
 
@@ -125,6 +136,8 @@ class Engine:
         self._order_manager.apply_fill(order.order_id, fill)
         self._position_tracker.apply_fill(fill)
 
+        logger.info(f"Fill applied: {fill.quantity} @ {fill.price} (slippage={fill.slippage_bps:.1f}bps)")
+
         # Update risk manager
         self._risk_manager.update_equity(self._broker.equity)
 
@@ -136,6 +149,7 @@ class Engine:
         current_price: Optional[float] = None,
     ) -> Optional[Order]:
         """Close an open position by submitting an opposite-side signal."""
+        logger.info(f"Closing position: {symbol}")
         position = self._position_tracker.get_position(symbol)
         if not position:
             raise ValueError(f"No open position for {symbol}")
@@ -169,6 +183,7 @@ class Engine:
 
     def update_price(self, symbol: str, price: float) -> None:
         """Update market price for a symbol."""
+        logger.debug(f"Price update: {symbol} = {price}")
         self._prices[symbol] = price
         self._position_tracker.update_price(symbol, price)
 
@@ -203,3 +218,18 @@ class Engine:
             is_halted=self._risk_manager.is_halted,
             halt_reason=self._risk_manager.halt_reason,
         )
+
+    def performance(self) -> 'PerformanceMetrics':
+        """Calculate portfolio performance metrics."""
+        from engine.metrics import calculate_metrics
+        return calculate_metrics(self._event_store.get_all())
+
+    def export_trades(self, filepath: str = "data/trades.csv") -> str:
+        """Export trade history to CSV (compatible with Nexural Research)."""
+        from engine.export import export_trades_csv
+        return export_trades_csv(self._event_store.get_all(), filepath)
+
+    def export_events(self, filepath: str = "data/events.csv") -> str:
+        """Export full event audit trail to CSV."""
+        from engine.export import export_events_csv
+        return export_events_csv(self._event_store.get_all(), filepath)

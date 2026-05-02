@@ -7,7 +7,7 @@ P&L splits into unrealized (open positions) and realized (closed trades).
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from models.orders import Side
@@ -26,8 +26,8 @@ class Position:
     quantity: float
     entry_price: float
     current_price: float = 0.0
-    opened_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    opened_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # P&L tracking
     realized_pnl: float = 0.0
@@ -75,7 +75,7 @@ class Position:
     def update_price(self, price: float) -> None:
         """Update the current market price for P&L calculation."""
         self.current_price = price
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def reduce(self, quantity: float, fill_price: float) -> float:
         """
@@ -97,7 +97,7 @@ class Position:
 
         self.realized_pnl += pnl
         self.quantity -= quantity
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
         return pnl
 
@@ -109,7 +109,7 @@ class Position:
         total_cost = (self.entry_price * self.quantity) + (fill_price * quantity)
         self.quantity += quantity
         self.entry_price = total_cost / self.quantity
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def __repr__(self) -> str:
         return (

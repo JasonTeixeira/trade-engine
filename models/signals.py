@@ -8,7 +8,7 @@ into sized orders.
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from models.orders import Side
@@ -28,7 +28,7 @@ class Signal:
     strength: float = 1.0  # 0.0 to 1.0 — used for position sizing
     strategy_id: Optional[str] = None
     metadata: dict = field(default_factory=dict)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self):
         if not 0.0 <= self.strength <= 1.0:
