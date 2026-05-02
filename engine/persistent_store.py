@@ -71,7 +71,17 @@ class PersistentEventStore:
             "INSERT INTO events (event_id, event_type, timestamp, data) VALUES (?, ?, ?, ?)",
             (event.event_id, event_type, event.timestamp.isoformat(), json.dumps(data))
         )
+        # Don't commit here — call flush() when done for better performance
+
+    def flush(self):
+        """Commit all pending events to disk."""
         self._conn.commit()
+
+    def __del__(self):
+        try:
+            self.flush()
+        except Exception:
+            pass
 
     @property
     def count(self) -> int:

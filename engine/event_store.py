@@ -23,10 +23,16 @@ class EventStore:
 
     def __init__(self):
         self._events: list[Event] = []
+        self._by_order: dict[str, list[Event]] = {}
+        self._by_symbol: dict[str, list[Event]] = {}
 
     def append(self, event: Event) -> None:
         """Store an event. Events are immutable once stored."""
         self._events.append(event)
+        if hasattr(event, 'order_id') and event.order_id:
+            self._by_order.setdefault(event.order_id, []).append(event)
+        if hasattr(event, 'symbol') and event.symbol:
+            self._by_symbol.setdefault(event.symbol, []).append(event)
 
     @property
     def count(self) -> int:
@@ -39,17 +45,11 @@ class EventStore:
 
     def get_by_order(self, order_id: str) -> list[Event]:
         """Return all events for a specific order."""
-        return [
-            e for e in self._events
-            if hasattr(e, 'order_id') and e.order_id == order_id
-        ]
+        return list(self._by_order.get(order_id, []))
 
     def get_by_symbol(self, symbol: str) -> list[Event]:
         """Return all events for a specific symbol."""
-        return [
-            e for e in self._events
-            if hasattr(e, 'symbol') and e.symbol == symbol
-        ]
+        return list(self._by_symbol.get(symbol, []))
 
     def get_by_type(self, event_type: Type[Event]) -> list[Event]:
         """Return all events of a specific type."""

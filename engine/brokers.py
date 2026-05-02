@@ -70,6 +70,11 @@ class SimulatedBroker(Broker):
         self.partial_fill_rate = partial_fill_rate
         self._rng = random.Random(seed)
         self._pending_orders: dict[str, Order] = {}
+        self._open_positions_value: float = 0.0
+
+    def update_positions_value(self, value: float) -> None:
+        """Update the mark-to-market value of open positions (unrealized P&L)."""
+        self._open_positions_value = value
 
     @property
     def name(self) -> str:
@@ -132,8 +137,8 @@ class SimulatedBroker(Broker):
 
     @property
     def equity(self) -> float:
-        """Current account equity."""
-        return self.capital
+        """Current account equity (cash + unrealized P&L from open positions)."""
+        return self.capital + self._open_positions_value
 
     @property
     def return_pct(self) -> float:

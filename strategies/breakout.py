@@ -53,6 +53,15 @@ class BreakoutStrategy(Strategy):
         self._closes.append(close)
         self._volumes.append(volume)
 
+        # Keep only what we need
+        max_lookback = max(self.entry_lookback, self.exit_lookback)
+        if len(self._closes) > max_lookback * 2:
+            trim_to = max_lookback + 2  # +2 to account for excluding current bar
+            self._highs = self._highs[-trim_to:]
+            self._lows = self._lows[-trim_to:]
+            self._closes = self._closes[-trim_to:]
+            self._volumes = self._volumes[-trim_to:]
+
         if len(self._closes) < self.entry_lookback + 1:
             return None
 

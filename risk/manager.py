@@ -40,16 +40,18 @@ class RiskManager:
         max_daily_loss_pct: float = 0.02,
         max_positions: int = 10,
         max_correlation: float = 0.80,
+        initial_capital: float = 100_000,
     ):
         self.max_position_pct = max_position_pct
         self.max_drawdown_pct = max_drawdown_pct
         self.max_daily_loss_pct = max_daily_loss_pct
         self.max_positions = max_positions
+        # NOTE: Correlation checking not yet implemented — requires price history for correlation matrix
         self.max_correlation = max_correlation
 
         # Track daily P&L
         self._daily_pnl: float = 0.0
-        self._peak_equity: float = 0.0
+        self._peak_equity: float = initial_capital
         self._trading_halted: bool = False
         self._halt_reason: str = ""
 

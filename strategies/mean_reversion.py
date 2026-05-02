@@ -45,6 +45,10 @@ class MeanReversionStrategy(Strategy):
 
         self._prices.append(close)
 
+        # Keep only what we need
+        if len(self._prices) > self.lookback * 2:
+            self._prices = self._prices[-self.lookback:]
+
         if len(self._prices) < self.lookback:
             return None
 

@@ -32,6 +32,7 @@ class TestPersistentStore:
     def test_events_survive_reload(self):
         signal = Signal(symbol="NQ", side=Side.BUY, strength=0.7)
         self.engine.submit_signal(signal, current_price=18000.0)
+        self.engine.flush()  # Commit pending events to disk
         event_count = len(self.engine.get_events())
         self.engine._event_store.close()
 

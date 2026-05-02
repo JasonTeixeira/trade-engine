@@ -148,7 +148,14 @@ class Engine:
         symbol: str,
         current_price: Optional[float] = None,
     ) -> Optional[Order]:
-        """Close an open position by submitting an opposite-side signal."""
+        """
+        Close an open position by submitting an opposite-side signal.
+
+        Note: Close orders intentionally bypass risk checks. This is by design —
+        we always want to be able to exit a position regardless of drawdown or
+        daily loss limits. The broker still validates sufficient capital for the
+        opposite-side order.
+        """
         logger.info(f"Closing position: {symbol}")
         position = self._position_tracker.get_position(symbol)
         if not position:
@@ -186,6 +193,9 @@ class Engine:
         logger.debug(f"Price update: {symbol} = {price}")
         self._prices[symbol] = price
         self._position_tracker.update_price(symbol, price)
+        # Update broker with mark-to-market value
+        if hasattr(self._broker, 'update_positions_value'):
+            self._broker.update_positions_value(self._position_tracker.total_unrealized_pnl)
 
     def get_position(self, symbol: str) -> Optional[Position]:
         """Get the current position for a symbol."""
@@ -223,6 +233,11 @@ class Engine:
         """Calculate portfolio performance metrics."""
         from engine.metrics import calculate_metrics
         return calculate_metrics(self._event_store.get_all())
+
+    def flush(self) -> None:
+        """Flush pending events to disk (for persistent stores)."""
+        if hasattr(self._event_store, 'flush'):
+            self._event_store.flush()
 
     def export_trades(self, filepath: str = "data/trades.csv") -> str:
         """Export trade history to CSV (compatible with Nexural Research)."""

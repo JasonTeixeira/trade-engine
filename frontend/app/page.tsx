@@ -19,6 +19,9 @@ import {
 import {
   AreaChart,
   Area,
+  BarChart,
+  Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -156,8 +159,12 @@ export default function Dashboard() {
   >([])
   const [eventsOpen, setEventsOpen] = useState(false)
 
-  // Strategy dropdown open
-  const [strategyOpen, setStrategyOpen] = useState(false)
+  // Strategy descriptions
+  const strategyDescriptions: Record<string, string> = {
+    momentum: "Buys when price crosses above the 20-period SMA by a threshold. Exits when price drops below SMA. Trend-following approach.",
+    mean_reversion: "Buys when price drops below the lower Bollinger Band (oversold). Exits when price returns to the mean or exceeds the upper band.",
+    breakout: "Buys when price breaks above the 20-period Donchian channel high. Exits when price breaks below the channel low. Turtle trader style.",
+  }
 
   // Health check on mount
   useEffect(() => {
@@ -214,22 +221,21 @@ export default function Dashboard() {
   ])
 
   // Export CSV
-  const handleExport = useCallback(async () => {
-    try {
-      const res = await api.exportCSV()
-      if (!res.ok) throw new Error("Export failed")
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `trade-engine-export-${Date.now()}.csv`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success("CSV exported")
-    } catch {
-      toast.error("Export failed")
+  const handleExport = useCallback(() => {
+    if (!result) return
+    let csv = "order_id,side,quantity,state,fill_price,rejection_reason\n"
+    for (const o of result.orders) {
+      csv += `${o.order_id},${o.side},${o.quantity},${o.state},${o.fill_price},${o.rejection_reason || ""}\n`
     }
-  }, [])
+    const blob = new Blob([csv], { type: "text/csv" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `backtest_${strategy}_${symbol}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success("CSV exported")
+  }, [result, strategy, symbol])
 
   // Use equity curve from backtest result directly
   const equityCurve = result?.equity_curve ?? []
@@ -262,63 +268,38 @@ export default function Dashboard() {
       {/* ----------------------------------------------------------------- */}
       {/* Main Content                                                      */}
       {/* ----------------------------------------------------------------- */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
         {/* ============================================================= */}
         {/* Left Panel — Config                                            */}
         {/* ============================================================= */}
-        <aside className="w-[40%] min-w-[340px] max-w-[520px] border-r border-[#27272A] overflow-y-auto p-6 space-y-6 shrink-0">
+        <aside className="w-full lg:w-[40%] lg:min-w-[340px] lg:max-w-[520px] border-b lg:border-b-0 lg:border-r border-[#27272A] overflow-y-auto p-6 space-y-6 shrink-0">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-[#A1A1AA]">
             Backtest Configuration
           </h2>
 
           {/* Strategy selector */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[#A1A1AA]">
+            <label htmlFor="strategy" className="text-xs font-medium text-[#A1A1AA]">
               Strategy
             </label>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setStrategyOpen(!strategyOpen)}
-                className="flex w-full items-center justify-between rounded-md border border-[#27272A] bg-[#18181B] px-3 py-2 text-sm hover:border-[#3F3F46] focus:outline-none focus:ring-1 focus:ring-[#06B6D4]"
-              >
-                <span className="capitalize">{strategy.replace("_", " ")}</span>
-                <ChevronDown className="h-4 w-4 text-[#71717A]" />
-              </button>
-              <AnimatePresence>
-                {strategyOpen && (
-                  <motion.ul
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -4 }}
-                    className="absolute z-10 mt-1 w-full rounded-md border border-[#27272A] bg-[#18181B] py-1 shadow-lg"
-                  >
-                    {strategies.map((s) => (
-                      <li key={s}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setStrategy(s)
-                            setStrategyOpen(false)
-                          }}
-                          className={`w-full px-3 py-2 text-left text-sm hover:bg-[#27272A] capitalize ${
-                            s === strategy ? "text-[#06B6D4]" : ""
-                          }`}
-                        >
-                          {s.replace("_", " ")}
-                        </button>
-                      </li>
-                    ))}
-                  </motion.ul>
-                )}
-              </AnimatePresence>
-            </div>
+            <select
+              id="strategy"
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              className="w-full bg-[#18181B] border border-[#27272A] rounded-lg px-4 py-3 text-[#FAFAFA] focus:border-[#06B6D4] focus:outline-none appearance-none cursor-pointer"
+            >
+              <option value="momentum">Momentum (SMA Crossover)</option>
+              <option value="mean_reversion">Mean Reversion (Bollinger Bands)</option>
+              <option value="breakout">Breakout (Donchian Channels)</option>
+            </select>
+            <p className="text-xs text-[#71717A] mt-2">{strategyDescriptions[strategy]}</p>
           </div>
 
           {/* Symbol */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[#A1A1AA]">Symbol</label>
+            <label htmlFor="symbol" className="text-xs font-medium text-[#A1A1AA]">Symbol</label>
             <input
+              id="symbol"
               type="text"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value.toUpperCase())}
@@ -329,10 +310,11 @@ export default function Dashboard() {
 
           {/* Initial Capital */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[#A1A1AA]">
+            <label htmlFor="initialCapital" className="text-xs font-medium text-[#A1A1AA]">
               Initial Capital
             </label>
             <input
+              id="initialCapital"
               type="number"
               value={initialCapital}
               onChange={(e) => setInitialCapital(Number(e.target.value))}
@@ -349,7 +331,7 @@ export default function Dashboard() {
             {/* Max Position % */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs text-[#A1A1AA]">
+                <label htmlFor="maxPositionPct" className="text-xs text-[#A1A1AA]">
                   Max Position Size
                 </label>
                 <span className="text-xs font-mono text-[#06B6D4]">
@@ -357,6 +339,7 @@ export default function Dashboard() {
                 </span>
               </div>
               <input
+                id="maxPositionPct"
                 type="range"
                 min={1}
                 max={20}
@@ -373,12 +356,13 @@ export default function Dashboard() {
             {/* Max Drawdown % */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs text-[#A1A1AA]">Max Drawdown</label>
+                <label htmlFor="maxDrawdownPct" className="text-xs text-[#A1A1AA]">Max Drawdown</label>
                 <span className="text-xs font-mono text-[#06B6D4]">
                   {maxDrawdownPct}%
                 </span>
               </div>
               <input
+                id="maxDrawdownPct"
                 type="range"
                 min={1}
                 max={30}
@@ -400,10 +384,11 @@ export default function Dashboard() {
             </h3>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-xs text-[#A1A1AA]">
+                <label htmlFor="slippageBps" className="text-xs text-[#A1A1AA]">
                   Slippage (bps)
                 </label>
                 <input
+                  id="slippageBps"
                   type="number"
                   value={slippageBps}
                   onChange={(e) => setSlippageBps(Number(e.target.value))}
@@ -411,8 +396,9 @@ export default function Dashboard() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs text-[#A1A1AA]">Commission ($)</label>
+                <label htmlFor="commission" className="text-xs text-[#A1A1AA]">Commission ($)</label>
                 <input
+                  id="commission"
                   type="number"
                   step={0.01}
                   value={commission}
@@ -547,76 +533,168 @@ export default function Dashboard() {
                 </div>
 
                 {/* ---- Equity Curve ---- */}
-                <div className="rounded-lg border border-[#27272A] bg-[#18181B] p-4">
-                  <h3 className="text-sm font-semibold text-[#A1A1AA] mb-4">
-                    Equity Curve
-                  </h3>
-                  <div className="h-[280px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={equityCurve}>
-                        <defs>
-                          <linearGradient
-                            id="equityGrad"
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="0%"
-                              stopColor="#06B6D4"
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="100%"
-                              stopColor="#06B6D4"
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid
-                          strokeDasharray="3 3"
-                          stroke="#27272A"
-                          vertical={false}
-                        />
-                        <XAxis
-                          dataKey="bar"
-                          tick={{ fill: "#71717A", fontSize: 11 }}
-                          axisLine={{ stroke: "#27272A" }}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tick={{ fill: "#71717A", fontSize: 11 }}
-                          axisLine={{ stroke: "#27272A" }}
-                          tickLine={false}
-                          tickFormatter={(v: number) =>
-                            `$${(v / 1000).toFixed(0)}k`
-                          }
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "#18181B",
-                            border: "1px solid #27272A",
-                            borderRadius: 8,
-                            color: "#FAFAFA",
-                            fontSize: 12,
-                          }}
-                          formatter={(value) => [
-                            `$${Number(value).toLocaleString()}`,
-                            "Equity",
-                          ]}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="equity"
-                          stroke="#06B6D4"
-                          strokeWidth={2}
-                          fill="url(#equityGrad)"
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
+                {(() => {
+                  const startDate = new Date(2024, 0, 1)
+                  const chartData = result.equity_curve.map((pt, i) => ({
+                    ...pt,
+                    date: new Date(startDate.getTime() + i * 3600000).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+                  }))
+
+                  // Compute drawdown data
+                  let peak = result.equity_curve[0]?.equity ?? 0
+                  const drawdownData = result.equity_curve.map((pt, i) => {
+                    if (pt.equity > peak) peak = pt.equity
+                    const dd = peak > 0 ? ((peak - pt.equity) / peak) * -100 : 0
+                    return { date: chartData[i].date, drawdown: dd }
+                  })
+
+                  return (
+                    <>
+                      <div className="rounded-lg border border-[#27272A] bg-[#18181B] p-4">
+                        <h3 className="text-sm font-semibold text-[#A1A1AA] mb-4">
+                          Equity Curve
+                        </h3>
+                        <div className="h-[280px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={chartData}>
+                              <defs>
+                                <linearGradient
+                                  id="equityGrad"
+                                  x1="0"
+                                  y1="0"
+                                  x2="0"
+                                  y2="1"
+                                >
+                                  <stop
+                                    offset="0%"
+                                    stopColor="#06B6D4"
+                                    stopOpacity={0.3}
+                                  />
+                                  <stop
+                                    offset="100%"
+                                    stopColor="#06B6D4"
+                                    stopOpacity={0}
+                                  />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid
+                                strokeDasharray="3 3"
+                                stroke="#27272A"
+                                vertical={false}
+                              />
+                              <XAxis
+                                dataKey="date"
+                                tick={{ fill: "#71717A", fontSize: 11 }}
+                                axisLine={{ stroke: "#27272A" }}
+                                tickLine={false}
+                                interval={Math.floor(result.equity_curve.length / 10)}
+                              />
+                              <YAxis
+                                tick={{ fill: "#71717A", fontSize: 11 }}
+                                axisLine={{ stroke: "#27272A" }}
+                                tickLine={false}
+                                tickFormatter={(v: number) =>
+                                  `$${(v / 1000).toFixed(0)}k`
+                                }
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: "#18181B",
+                                  border: "1px solid #27272A",
+                                  borderRadius: 8,
+                                  color: "#FAFAFA",
+                                  fontSize: 12,
+                                }}
+                                formatter={(value) => [
+                                  `$${Number(value).toLocaleString()}`,
+                                  "Equity",
+                                ]}
+                              />
+                              <Area
+                                type="monotone"
+                                dataKey="equity"
+                                stroke="#06B6D4"
+                                strokeWidth={2}
+                                fill="url(#equityGrad)"
+                              />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+
+                      {/* ---- Drawdown Curve ---- */}
+                      <div className="rounded-lg border border-[#27272A] bg-[#18181B] p-4">
+                        <h3 className="text-sm font-semibold text-[#A1A1AA] mb-4">
+                          Drawdown (%)
+                        </h3>
+                        <div className="h-[200px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={drawdownData}>
+                              <defs>
+                                <linearGradient
+                                  id="drawdownGrad"
+                                  x1="0"
+                                  y1="0"
+                                  x2="0"
+                                  y2="1"
+                                >
+                                  <stop
+                                    offset="0%"
+                                    stopColor="#EF4444"
+                                    stopOpacity={0.3}
+                                  />
+                                  <stop
+                                    offset="100%"
+                                    stopColor="#EF4444"
+                                    stopOpacity={0}
+                                  />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid
+                                strokeDasharray="3 3"
+                                stroke="#27272A"
+                                vertical={false}
+                              />
+                              <XAxis
+                                dataKey="date"
+                                tick={{ fill: "#71717A", fontSize: 11 }}
+                                axisLine={{ stroke: "#27272A" }}
+                                tickLine={false}
+                                interval={Math.floor(drawdownData.length / 10)}
+                              />
+                              <YAxis
+                                tick={{ fill: "#71717A", fontSize: 11 }}
+                                axisLine={{ stroke: "#27272A" }}
+                                tickLine={false}
+                                tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: "#18181B",
+                                  border: "1px solid #27272A",
+                                  borderRadius: 8,
+                                  color: "#FAFAFA",
+                                  fontSize: 12,
+                                }}
+                                formatter={(value) => [
+                                  `${Number(value).toFixed(2)}%`,
+                                  "Drawdown",
+                                ]}
+                              />
+                              <Area
+                                type="monotone"
+                                dataKey="drawdown"
+                                stroke="#EF4444"
+                                strokeWidth={2}
+                                fill="url(#drawdownGrad)"
+                              />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    </>
+                  )
+                })()}
 
                 {/* ---- Orders Table ---- */}
                 <div className="rounded-lg border border-[#27272A] bg-[#18181B] overflow-hidden">
@@ -687,6 +765,69 @@ export default function Dashboard() {
                     </table>
                   </div>
                 </div>
+
+                {/* ---- Trade P&L Distribution ---- */}
+                {(() => {
+                  const closedPnls = (result.events ?? [])
+                    .filter((ev) => ev.type === "PositionClosed" && ev.data?.realized_pnl != null)
+                    .map((ev, i) => ({
+                      trade: i + 1,
+                      pnl: Number(ev.data.realized_pnl),
+                    }))
+                  if (closedPnls.length === 0) return null
+                  return (
+                    <div className="rounded-lg border border-[#27272A] bg-[#18181B] p-4">
+                      <h3 className="text-sm font-semibold text-[#A1A1AA] mb-4">
+                        Trade P&amp;L Distribution
+                      </h3>
+                      <div className="h-[220px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={closedPnls}>
+                            <CartesianGrid
+                              strokeDasharray="3 3"
+                              stroke="#27272A"
+                              vertical={false}
+                            />
+                            <XAxis
+                              dataKey="trade"
+                              tick={{ fill: "#71717A", fontSize: 11 }}
+                              axisLine={{ stroke: "#27272A" }}
+                              tickLine={false}
+                              label={{ value: "Trade #", position: "insideBottom", offset: -2, fill: "#71717A", fontSize: 11 }}
+                            />
+                            <YAxis
+                              tick={{ fill: "#71717A", fontSize: 11 }}
+                              axisLine={{ stroke: "#27272A" }}
+                              tickLine={false}
+                              tickFormatter={(v: number) => `$${v.toFixed(0)}`}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "#18181B",
+                                border: "1px solid #27272A",
+                                borderRadius: 8,
+                                color: "#FAFAFA",
+                                fontSize: 12,
+                              }}
+                              formatter={(value) => [
+                                `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                                "P&L",
+                              ]}
+                            />
+                            <Bar dataKey="pnl">
+                              {closedPnls.map((entry, index) => (
+                                <Cell
+                                  key={index}
+                                  fill={entry.pnl >= 0 ? "#10B981" : "#EF4444"}
+                                />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* ---- Events Panel ---- */}
                 {events.length > 0 && (
