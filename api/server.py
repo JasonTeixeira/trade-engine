@@ -251,3 +251,95 @@ def get_events(limit: int = Query(default=50, ge=1, le=1000)):
     all_events = engine.get_events()
     recent = all_events[-limit:]
     return {"events": [_serialize_event(e) for e in recent], "total": len(all_events)}
+
+
+# ═══ Nexural Research Integration ═══
+
+RESEARCH_API = os.getenv("NEXURAL_RESEARCH_URL", "http://localhost:8000")
+
+
+@app.post("/research/analyze")
+def analyze_with_research():
+    """
+    Export trades from the engine and analyze with Nexural Research.
+
+    Workflow:
+    1. Export current trades to CSV
+    2. Upload CSV to Nexural Research API
+    3. Fetch comprehensive metrics
+    4. Return combined analysis
+    """
+    import httpx
+
+    if engine is None:
+        raise HTTPException(status_code=404, detail="No engine running. POST /engine/run first.")
+
+    # Export trades to CSV
+    csv_path = engine.export_trades("data/research_upload.csv")
+
+    # Upload to Nexural Research
+    try:
+        with open(csv_path, "rb") as f:
+            upload_resp = httpx.post(
+                f"{RESEARCH_API}/api/upload",
+                files={"file": ("trades.csv", f, "text/csv")},
+                timeout=30,
+            )
+
+        if upload_resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Nexural Research upload failed: {upload_resp.text}",
+            )
+
+        session_data = upload_resp.json()
+        session_id = session_data.get("session_id", "")
+
+        # Fetch comprehensive analysis
+        analysis_resp = httpx.get(
+            f"{RESEARCH_API}/api/analysis/comprehensive",
+            params={"session_id": session_id},
+            timeout=30,
+        )
+
+        if analysis_resp.status_code != 200:
+            # Return partial result with upload success
+            return {
+                "status": "partial",
+                "session_id": session_id,
+                "upload": session_data,
+                "analysis": None,
+                "message": "Upload succeeded but analysis endpoint not available",
+            }
+
+        analysis = analysis_resp.json()
+
+        return {
+            "status": "complete",
+            "session_id": session_id,
+            "analysis": analysis,
+            "engine_metrics": engine.performance().__dict__ if engine else {},
+        }
+
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Cannot connect to Nexural Research at {RESEARCH_API}. "
+                "Start it with: cd Nexural-Research && PYTHONPATH=src uvicorn nexural_research.api.app:app --port 8000"
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Research analysis failed: {str(e)}")
+
+
+@app.get("/research/status")
+def research_status():
+    """Check if Nexural Research is available."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{RESEARCH_API}/api/health", timeout=5)
+        return {"available": resp.status_code == 200, "url": RESEARCH_API, "response": resp.json()}
+    except Exception:
+        return {"available": False, "url": RESEARCH_API, "message": "Not running"}
